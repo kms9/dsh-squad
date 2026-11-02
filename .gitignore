@@ -1,0 +1,14 @@
+# Dependencies and build output
+node_modules/
+.build/
+
+# Experiment run evidence and reports: kept on the machine that ran them
+.runs/
+reports/
+
+# Secrets and local environment: never commit these
+.env
+.env.*
+.secrets/
+*.pem
+*.key

@@ -1,0 +1,234 @@
+// Package task defines the durable execution contract, independent of transport.
+package task
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/kms9/dsh-squad/dsh_squad/controller/project"
+)
+
+type Error struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details any    `json:"details,omitempty"`
+}
+
+func (e *Error) Error() string          { return e.Code + ": " + e.Message }
+func Reject(code, message string) error { return &Error{Code: code, Message: message} }
+
+type Binding struct {
+	AgentID      string `json:"agent_id"`
+	RuntimeID    string `json:"runtime_id"`
+	SessionID    string `json:"session_id"`
+	BindingEpoch int64  `json:"binding_epoch"`
+	PrimaryEpoch int64  `json:"primary_epoch"`
+}
+type Source struct {
+	Origin    string   `json:"origin"`
+	Binding   *Binding `json:"binding,omitempty"`
+	TaskID    string   `json:"task_id,omitempty"`
+	AttemptID string   `json:"attempt_id,omitempty"`
+	InputID   string   `json:"input_id,omitempty"`
+}
+type Blocker struct {
+	Kind     string    `json:"kind"`
+	Resource string    `json:"resource"`
+	Owner    string    `json:"owner,omitempty"`
+	Revision int64     `json:"revision"`
+	Since    time.Time `json:"since"`
+}
+type WaitingRole struct {
+	RoleID            string `json:"role_id"`
+	OwnerTeamID       string `json:"owner_team_id"`
+	OwnerRunID        string `json:"owner_run_id"`
+	OwnershipRevision int64  `json:"ownership_revision"`
+}
+
+// GateFailure is why the final check refused a Run (UI plan C2).
+type GateFailure struct {
+	Code     string    `json:"code"`
+	TaskID   string    `json:"task_id,omitempty"`
+	TaskGoal string    `json:"task_goal,omitempty"`
+	At       time.Time `json:"at"`
+}
+
+// GuidanceNote is one piece of guidance with where it came from and, when given, the
+// task it is about (UI plan C5). Run.Guidance keeps the text the Leader reads.
+type GuidanceNote struct {
+	Text   string    `json:"text"`
+	TaskID string    `json:"task_id,omitempty"`
+	By     string    `json:"by"`
+	At     time.Time `json:"at"`
+}
+
+type Run struct {
+	GateFailure      *GateFailure         `json:"gate_failure,omitempty"`
+	GuidanceNotes    []GuidanceNote       `json:"guidance_notes,omitempty"`
+	ID               string               `json:"run_id"`
+	TeamID           string               `json:"team_id"`
+	Goal             string               `json:"goal"`
+	Source           Source               `json:"source"`
+	Config           project.TeamSnapshot `json:"config_snapshot"`
+	Leader           Binding              `json:"leader"`
+	QueueSeq         int64                `json:"queue_seq"`
+	Admitted         bool                 `json:"admitted"`
+	Phase            string               `json:"phase"`
+	Revision         int64                `json:"revision"`
+	Cleanup          string               `json:"cleanup_state"`
+	RecoveryHold     bool                 `json:"recovery_hold"`
+	Blockers         []Blocker            `json:"blockers"`
+	WaitingRoles     []WaitingRole        `json:"waiting_roles"`
+	Guidance         []string             `json:"guidance"`
+	CompletionIntent int64                `json:"completion_intent,omitempty"`
+	LeaderRevision   int64                `json:"leader_revision"`
+	CreatedAt        time.Time            `json:"created_at"`
+}
+type Dependency struct {
+	TaskID    string `json:"task_id"`
+	Condition string `json:"condition"`
+}
+
+// Origin says what made a task, so it can be drawn under what made it (UI plan C1):
+// the workflow at Run start, a Leader decision (By = the Leader step), a delegation
+// (By = the parent), a review or rework (By = the task reviewed or reworked), or a
+// direct request.
+type Origin struct {
+	Kind string `json:"kind"`
+	By   string `json:"by,omitempty"`
+}
+
+type Contract struct {
+	Origin *Origin `json:"origin,omitempty"`
+	// Ignored marks a task a person chose to drop ("忽略", UI plan D1).
+	Ignored bool `json:"ignored,omitempty"`
+	// StaleKept: a person kept this task although an input was replaced (Q41, D2).
+	StaleKept          bool                      `json:"stale_kept,omitempty"`
+	Title              string                    `json:"title,omitempty"`
+	AcceptanceCriteria json.RawMessage           `json:"acceptance_criteria,omitempty"`
+	GuidanceCount      int                       `json:"guidance_count,omitempty"`
+	SeenRevision       int64                     `json:"seen_revision,omitempty"` // the Run revision a LeaderStep was dispatched at
+	ReworkOf           string                    `json:"rework_of,omitempty"`
+	SupersededBy       string                    `json:"superseded_by,omitempty"`
+	ID                 string                    `json:"task_id"`
+	Scope              string                    `json:"scope"`
+	TeamID             *string                   `json:"team_id"`
+	RunID              *string                   `json:"run_id"`
+	RoleID             string                    `json:"role_id"`
+	Kind               string                    `json:"kind"`
+	Goal               string                    `json:"goal"`
+	GoalRevision       int64                     `json:"goal_revision"`
+	AppliedRevision    int64                     `json:"applied_revision"`
+	Revision           int64                     `json:"revision"`
+	State              string                    `json:"state"`
+	Accepted           bool                      `json:"accepted"`
+	Source             Source                    `json:"source"`
+	RootID             string                    `json:"root_id"`
+	ParentID           string                    `json:"parent_id,omitempty"`
+	Depth              int                       `json:"depth"`
+	Target             *Binding                  `json:"expected_target"`
+	Dependencies       []Dependency              `json:"dependencies"`
+	Refs               []project.ResultRef       `json:"refs"`
+	ExpectedOutput     json.RawMessage           `json:"expected_output"`
+	AcceptancePolicy   *project.AcceptancePolicy `json:"acceptance_policy"`
+	AllowedTools       []string                  `json:"allowed_tools"`
+	WriteSet           []string                  `json:"write_set"`
+	Policy             project.Policy            `json:"policy"`
+	Blockers           []Blocker                 `json:"blockers"`
+	AttemptIDs         []string                  `json:"attempt_ids"`
+	Amendments         []string                  `json:"amendments"`
+	Result             *Result                   `json:"result,omitempty"`
+	Acceptance         *Acceptance               `json:"acceptance,omitempty"`
+	CreatedAt          time.Time                 `json:"created_at"`
+}
+type Context struct {
+	Role             project.Role `json:"role"`
+	TeamInstructions string       `json:"team_instructions"`
+	ConfigHash       string       `json:"config_hash"`
+	AllowedTools     []string     `json:"allowed_tools"`
+	WriteSet         []string     `json:"write_set"`
+}
+type Attempt struct {
+	Mode              string    `json:"segment_mode,omitempty"`
+	ClarificationID   string    `json:"clarification_id,omitempty"`
+	ClarificationText string    `json:"clarification_text,omitempty"`
+	ID                string    `json:"attempt_id"`
+	TaskID            string    `json:"task_id"`
+	Number            int       `json:"attempt_no"`
+	RetryOf           string    `json:"retry_of,omitempty"`
+	State             string    `json:"state"`
+	Cleanup           string    `json:"cleanup_state"`
+	Target            Binding   `json:"target"`
+	Context           Context   `json:"context"`
+	Segment           int64     `json:"segment_id"`
+	ControllerEpoch   int64     `json:"controller_epoch"`
+	FencingToken      int64     `json:"fencing_token"`
+	LeaseExpiresAt    time.Time `json:"lease_expires_at"`
+	Receipt           string    `json:"receipt"`
+	YieldRequested    bool      `json:"yield_requested"`
+	ResultProposed    *Result   `json:"result_proposed,omitempty"`
+	Error             string    `json:"error,omitempty"`
+	Revision          int64     `json:"revision"`
+}
+type Artifact struct {
+	Length    int64  `json:"length"`
+	Path      string `json:"path"`
+	SHA256    string `json:"sha256"`
+	Name      string `json:"name,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
+}
+type Result struct {
+	Revision     int64               `json:"revision"`
+	GoalRevision int64               `json:"goal_revision"`
+	AttemptID    string              `json:"attempt_id"`
+	AgentID      string              `json:"agent_id"`
+	Value        json.RawMessage     `json:"value"`
+	Artifacts    []Artifact          `json:"artifacts"`
+	Refs         []project.ResultRef `json:"refs"`
+	Hash         string              `json:"hash"`
+}
+type Acceptance struct {
+	Decision     string              `json:"decision"`
+	Mode         string              `json:"mode"`
+	ResultHash   string              `json:"result_hash"`
+	GoalRevision int64               `json:"goal_revision"`
+	ReviewerID   string              `json:"reviewer_id,omitempty"`
+	CoveredBy    string              `json:"covered_by,omitempty"`
+	Reason       string              `json:"reason"`
+	Evidence     []project.ResultRef `json:"evidence"`
+}
+type Event struct {
+	Seq      int64           `json:"seq"`
+	Type     string          `json:"type"`
+	EntityID string          `json:"entity_id"`
+	Revision int64           `json:"revision"`
+	Time     time.Time       `json:"server_time"`
+	Details  json.RawMessage `json:"details"`
+}
+
+func Terminal(state string) bool {
+	return state == "completed" || state == "failed" || state == "cancelled" || state == "interrupted"
+}
+func SameBinding(a, b Binding) bool { return a == b }
+func ValidateContract(c Contract) error {
+	if c.ID == "" || c.RootID == "" || c.Goal == "" || c.Revision < 1 || c.GoalRevision < 1 || c.Depth < 0 {
+		return Reject("INVALID_TASK", "missing contract fields")
+	}
+	if c.Scope == "team" {
+		if c.TeamID == nil || c.RunID == nil {
+			return Reject("INVALID_SCOPE", "Team requires team/run")
+		}
+	} else if c.Scope != "standalone" || c.TeamID != nil || c.RunID != nil {
+		return Reject("INVALID_SCOPE", "standalone has null team/run")
+	}
+	switch c.Kind {
+	case "execute", "review", "rework", "ask", "leader_step":
+	default:
+		return fmt.Errorf("invalid task kind %s", c.Kind)
+	}
+	if c.Accepted && c.Target == nil {
+		return Reject("INVALID_BINDING", "accepted task needs target")
+	}
+	return nil
+}
